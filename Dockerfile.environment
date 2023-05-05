@@ -1,0 +1,13 @@
+FROM gcc:12-bullseye
+
+
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    netcat \
+    strace \
+    gdb
+
+RUN mkdir -p workspace
+WORKDIR /home/workspace
+
+VOLUME /home/workspace
