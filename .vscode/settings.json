@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "socket.h": "c",
+        "limits.h": "c",
+        "stat.h": "c",
+        "fcntl.h": "c"
+    }
+}
