@@ -37,8 +37,7 @@ void serve_client(client* request);
 void* serve_request(void* args);
 void on_ping_request(pthread_t thread,client* request);
 void on_other_request(pthread_t thread, client* request, char* content);
-void read_request_message(client* request, pthread_t thread, char** request_content);
-void merge_buffers(char** buffers, int number_of_buffers, char** result, int result_size);
+int read_request_message(client* request, pthread_t thread, char** request_content);
 int is_http(char *msg);
 http_request_line* extract_request_line(char* content);
 void on_http_request(pthread_t thread, client* request, char* content);
@@ -74,7 +73,7 @@ int main(int argc, const char** argv) {
     socklen_t size = sizeof(struct sockaddr);
    
     while (1) {
-        client_info = malloc(sizeof(client_info));
+        client_info = malloc(sizeof(client));
         client_info->address = malloc(size);
         client_info->fd = accept(
             server_fd, 
@@ -89,7 +88,7 @@ int main(int argc, const char** argv) {
 }
 
 char* int_to_string(int number) {
-    char* string = (char*)malloc(MAX_LONG_LENGTH); 
+    char* string = (char*)malloc(MAX_LONG_LENGTH + 1); 
     sprintf(string, "%d", number);
     return string;
 }
@@ -139,7 +138,8 @@ void serve_client(client* request) {
 }
 
 int is_http(char *msg) {
-    char* msg_copy = malloc(strlen(msg));
+    int msg_length = strlen(msg);
+    char* msg_copy = malloc(msg_length + 1);
     strcpy(msg_copy, msg);
     char* request_line = strtok(msg_copy, "\r\n");
     regex_t regex;
@@ -159,7 +159,17 @@ void* serve_request(void* args) {
     pthread_t thread = pthread_self();
     char* request_content;
 
-    read_request_message(request, thread, &request_content);
+    int error = read_request_message(request, thread, &request_content);
+    if (error != 0 && request_content != NULL) {
+        free(request_content);
+        return NULL;
+    }
+    if (error != 0) {
+        free(request->address);
+        free(request);
+        close(request->fd);
+        return NULL;
+    }
 
     if (strcmp("PING", request_content) == 0) {
         on_ping_request(thread, request);
@@ -217,7 +227,7 @@ void handle_image_request(pthread_t thread, client* request) {
     int image = open(getenv("IMAGE_PATH"), O_RDONLY);
     fstat(image, &image_stats);
     response = "HTTP/1.1 200 Ok\r\nContent-Type: image/jpeg\r\nContent-Length: %ld\r\nConnection: Close\r\n\r\n";
-    response_headers = malloc(strlen(response) + MAX_LONG_LENGTH);
+    response_headers = malloc(strlen(response) + MAX_LONG_LENGTH + 1);
     sprintf(response_headers, response, image_stats.st_size);
     headers_size = strlen(response_headers);
     int headers_sent = send(request->fd, response_headers, headers_size, 0);
@@ -238,47 +248,37 @@ void handle_other_request(pthread_t thread, client* request) {
     }
 }
 
-void read_request_message(client* request, pthread_t thread, char** request_content) {
+int read_request_message(client* request, pthread_t thread, char** request_content) {
     ssize_t received_bytes;
-    char* buffers[IN_BUFFER_SIZE];
     char buffer[IN_BUFFER_SIZE];
-    int buffers_received = 0, total_received = 0, real_data_length;
+    int total_received = 0;
+    int real_data;
+    size_t buffer_size = 0;
 
-    memset(buffer,0, IN_BUFFER_SIZE);
-    received_bytes = recv(request->fd, &buffer, IN_BUFFER_SIZE, 0);
-    real_data_length = strlen(buffer);
+    *request_content = NULL;
 
-    do {
-        if (received_bytes != 0 && received_bytes != -1) {
-            buffers[buffers_received] = malloc(received_bytes);
-            memcpy(buffers[buffers_received], buffer, received_bytes);
-            buffers_received++;
-            total_received += real_data_length;
+     do {
+        received_bytes = recv(request->fd, buffer, IN_BUFFER_SIZE, 0);
+        if (received_bytes > 0) {
+            *request_content = realloc(*request_content, buffer_size + received_bytes + 1);
+            memcpy(*request_content + buffer_size, buffer, received_bytes);
+            buffer_size += received_bytes;
+            total_received += received_bytes;
         }
-        if (real_data_length == IN_BUFFER_SIZE) {
-            received_bytes = recv(request->fd, &buffer, IN_BUFFER_SIZE, 0);
-            real_data_length = strlen(buffer);
-        }
-    } while(real_data_length == IN_BUFFER_SIZE);
-    
+    } while (strnlen(buffer, IN_BUFFER_SIZE) == IN_BUFFER_SIZE);
+
     if (received_bytes == -1) {
-       printf("[Thread %lu] Error receiving bytes\n",thread); 
+       printf("[Thread %lu] Error receiving bytes\n", thread); 
+       return -1;
     } else {
-        merge_buffers(buffers, buffers_received, request_content, total_received);
-    }
-}
-
-void merge_buffers(char** buffers, int number_of_buffers, char** result, int result_size) {
-    *result = malloc(result_size);
-    memset(*result, 0, result_size);
-    for (int i = 0; i < number_of_buffers; i++) {
-        strcat(*result, buffers[i]);
-        free(buffers[i]); 
+        printf("%d - %d\n", strlen(*request_content), total_received);
+        (*request_content)[total_received] = '\0';
+        return 0;
     }
 }
 
 http_request_line* extract_request_line(char* content) {
-    char* content_copy = malloc(strlen(content));
+    char* content_copy = malloc(strlen(content) + 1);
     strcpy(content_copy, content);
     char* token = strtok(content_copy, "\r\n");
     char* raw_line = malloc(strlen(token));
