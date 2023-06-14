@@ -162,9 +162,11 @@ void* serve_request(void* args) {
     int error = read_request_message(request, thread, &request_content);
     if (error != 0 && request_content != NULL) {
         free(request_content);
+        free(request->address);
+        free(request);
+        close(request->fd);
         return NULL;
-    }
-    if (error != 0) {
+    } else if (error != 0 || request_content == NULL) {
         free(request->address);
         free(request);
         close(request->fd);
@@ -265,16 +267,13 @@ int read_request_message(client* request, pthread_t thread, char** request_conte
             buffer_size += received_bytes;
             total_received += received_bytes;
         }
-    } while (strnlen(buffer, IN_BUFFER_SIZE) == IN_BUFFER_SIZE);
+    } while (received_bytes != -1 && strnlen(buffer, IN_BUFFER_SIZE) == IN_BUFFER_SIZE);
 
     if (received_bytes == -1) {
        printf("[Thread %lu] Error receiving bytes\n", thread); 
        return -1;
-    } else {
-        printf("%d - %d\n", strlen(*request_content), total_received);
-        (*request_content)[total_received] = '\0';
-        return 0;
     }
+    return 0;
 }
 
 http_request_line* extract_request_line(char* content) {
